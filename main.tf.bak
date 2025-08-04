@@ -1,0 +1,272 @@
+terraform {
+  required_providers {
+    aws = {
+      source  = "hashicorp/aws"
+      version = "~> 4.0"
+    }
+  }
+}
+
+provider "aws" {
+  region = "us-east-1"
+}
+
+
+
+
+
+
+##### STORAGE
+# STATIC SITE BUCKET
+# Bucket
+resource "aws_s3_bucket" "website_bucket" {
+  bucket = "organizethisspace-staticsite-bucket"
+}
+
+# Config
+resource "aws_s3_bucket_website_configuration" "website_config" {
+  bucket = aws_s3_bucket.website_bucket.id
+
+  index_document {
+    suffix = "index.html"
+  }
+
+  error_document {
+    key = "error.html"
+  }
+}
+
+# Policy
+resource "aws_s3_bucket_policy" "website_policy" {
+  bucket = aws_s3_bucket.website_bucket.id
+  policy = jsonencode({
+    Version = "2012-10-17",
+    Statement = [
+      {
+        Sid       = "PublicReadGetObject",
+        Effect    = "Allow",
+        Principal = "*",
+        Action    = "s3:GetObject",
+        Resource  = "${aws_s3_bucket.website_bucket.arn}/*"
+      }
+    ]
+  })
+}
+
+
+# IMAGE STORAGE BUCKET
+resource "aws_s3_bucket" "image_bucket" {
+  bucket = "organizethisspace-images-bucket"
+}
+
+
+
+##### DATABASES
+# DYNAMODB
+# User data table
+resource "aws_dynamodb_table" "users" {
+  name             = "users"
+  billing_mode     = "PROVISIONED"
+  read_capacity    = 5
+  write_capacity   = 5
+  hash_key         = "userId"
+
+  # Defines the table attributes as requested.
+  attribute {
+    name = "userId"
+    type = "S" # String
+  }
+  attribute {
+    name = "photoS3Url"
+    type = "S" # String
+  }
+  attribute {
+    name = "cleanedS3Url"
+    type = "S" # String
+  }
+  attribute {
+    name = "scheduleText"
+    type = "S" # String
+  }
+  attribute {
+    name = "dailyBudget"
+    type = "N" # Number
+  }
+  attribute {
+    name = "itemsList"
+    type = "S" # String
+  }
+}
+
+
+
+##### COGNITO
+resource "aws_cognito_user_pool" "user_pool" {
+  name = "MyUserPool"
+}
+
+
+
+##### LAMBDA
+# ROLE
+resource "aws_iam_role" "lambda_exec_role" {
+  name = "lambda-execution-role-2025"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17",
+    Statement = [
+      {
+        Action = "sts:AssumeRole",
+        Effect = "Allow",
+        Principal = {
+          Service = "lambda.amazonaws.com"
+        }
+      }
+    ]
+  })
+}
+
+
+# POLICY
+resource "aws_iam_role_policy" "lambda_access_policy" {
+  name = "lambda-access-policy"
+  role = aws_iam_role.lambda_exec_role.id
+
+  policy = jsonencode({
+    Version = "2012-10-17",
+    Statement = [
+      # Allows the Lambda function to write logs to CloudWatch.
+      {
+        Effect   = "Allow",
+        Action   = [
+          "logs:CreateLogGroup",
+          "logs:CreateLogStream",
+          "logs:PutLogEvents",
+        ],
+        Resource = "arn:aws:logs:*:*:*"
+      },
+      # Grants access to read/write from the image S3 bucket.
+      {
+        Effect   = "Allow",
+        Action   = [
+          "s3:GetObject",
+          "s3:PutObject",
+          "s3:PutObjectAcl",
+        ],
+        Resource = "${aws_s3_bucket.image_bucket.arn}/*"
+      },
+      # Grants full access to the DynamoDB table.
+      {
+        Effect   = "Allow",
+        Action   = [
+          "dynamodb:GetItem",
+          "dynamodb:PutItem",
+          "dynamodb:UpdateItem",
+          "dynamodb:DeleteItem",
+        ],
+        Resource = aws_dynamodb_table.users.arn
+      }
+      # NOTE: Access to the external ChatGPT API is handled by the Python code,
+      # using an API key stored in a secure location (e.g., AWS Secrets Manager
+      # or as an environment variable in the Lambda function).
+      # IAM roles do not directly manage access to external services.
+    ]
+  })
+}
+
+
+# ZIP FILE
+data "archive_file" "app_lambda_zip" {
+  type        = "zip"
+  output_path = "app_lambda_payload.zip"
+  source_file = "./app_lambda.py"
+}
+
+
+
+# FUNCTION
+resource "aws_lambda_function" "app_lambda_function" {
+  filename         = "app_lambda_payload.zip"
+  function_name    = "AppLambdaFunction"
+  role             = aws_iam_role.lambda_exec_role.arn
+  handler          = "app_lambda.lambda_handler"
+  source_code_hash = data.archive_file.app_lambda_zip.output_base64sha256
+  runtime          = "python3.9"
+}
+
+
+
+##### API GATEWAY
+# REST API
+resource "aws_api_gateway_rest_api" "ots_api" {
+  name = "MyAPI"
+}
+
+
+# RESOURCE FOR ENDPOINT PATH
+resource "aws_api_gateway_resource" "ots_api_resource" {
+  rest_api_id = aws_api_gateway_rest_api.ots_api.id
+  parent_id   = aws_api_gateway_rest_api.ots_api.root_resource_id
+  path_part   = "process"
+}
+
+
+# POST METHOD
+resource "aws_api_gateway_method" "ots_api_method" {
+  rest_api_id   = aws_api_gateway_rest_api.ots_api.id
+  resource_id   = aws_api_gateway_resource.ots_api_resource.id
+  http_method   = "POST"
+  authorization = "NONE" # You can change this to use Cognito for auth
+}
+
+
+# GATEWAY + LAMBDA INTEGRATION
+resource "aws_api_gateway_integration" "lambda_integration" {
+  rest_api_id             = aws_api_gateway_rest_api.ots_api.id
+  resource_id             = aws_api_gateway_resource.ots_api_resource.id
+  http_method             = aws_api_gateway_method.ots_api_method.http_method
+  integration_http_method = "POST"
+  type                    = "AWS_PROXY"
+  uri                     = aws_lambda_function.app_lambda_function.invoke_arn
+}
+
+
+# GATEWAY LAMBDA PERMISSION
+resource "aws_lambda_permission" "apigw_lambda_permission" {
+  statement_id  = "AllowAPIGatewayInvoke"
+  action        = "lambda:InvokeFunction"
+  function_name = aws_lambda_function.app_lambda_function.function_name
+  principal     = "apigateway.amazonaws.com"
+  source_arn    = "${aws_api_gateway_rest_api.ots_api.execution_arn}/*/*"
+}
+
+
+# DEPLOYMENT AND STAGE
+resource "aws_api_gateway_deployment" "ots_api_deployment" {
+  rest_api_id = aws_api_gateway_rest_api.ots_api.id
+  triggers = {
+    redeployment = sha1(jsonencode(aws_api_gateway_rest_api.ots_api.body))
+  }
+  lifecycle {
+    create_before_destroy = true
+  }
+}
+
+resource "aws_api_gateway_stage" "ots_api_stage" {
+  deployment_id = aws_api_gateway_deployment.ots_api_deployment.id
+  rest_api_id   = aws_api_gateway_rest_api.ots_api.id
+  stage_name    = "prod"
+}
+
+
+
+
+
+
+
+
+
+
+
+
+

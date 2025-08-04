@@ -1,12 +1,14 @@
 terraform {
-  required_providers {
-    aws = {
-      source  = "hashicorp/aws"
-      version = "~> 4.0"
-    }
+  required_version = ">= 1.6.0"
+
+  backend "s3" {
+    bucket         = "messy-room-tfstate"
+    key            = "state/terraform.tfstate"
+    region         = "us-east-1"
+    encrypt        = true
   }
 }
 
 provider "aws" {
-  region = "us-west-2"
+  region = var.aws_region
 }
