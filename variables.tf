@@ -11,7 +11,7 @@ variable "uploads_bucket" {
 }
 
 variable "lambda_runtime" {
-  default = "python3.11"
+  default = "python3.10"
 }
 
 variable "lambda_code_bucket" {
