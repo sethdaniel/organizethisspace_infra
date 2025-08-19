@@ -1,7 +1,7 @@
 # This block defines the OpenTofu providers we will use.
 # In this case, we only need the AWS provider.
 # The source tells OpenTofu where to find the provider.
-tofu {
+terraform {
   required_providers {
     aws = {
       source  = "hashicorp/aws"
