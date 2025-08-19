@@ -1,0 +1,45 @@
+name: OpenTofu Deploy
+
+on:
+  push:
+    branches:
+      - master
+
+jobs:
+
+  # MAIN DEPLOYMENT 
+  deploy:
+    runs-on: ubuntu-latest
+    
+    # INITIALIZE THESE MUTHAFCKN VARS
+    env:
+      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      
+    # STEPS
+    steps:
+      # DEPLOY STEP 1 - CHECKOUT 
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # DEPLOY STEP 2 - INSTALL OPENTOFU
+      - name: Setup OpenTofu
+        uses: opentofu/setup-opentofu@v1
+        with:
+          tofu_version: latest
+      
+      # DEPLOY STEP 3 - INITIALIZE OPENTOFU
+      - name: OpenTofu Init
+        run: tofu init
+
+      # DEPLOY STEP 4 - TOFU VALIDATE 
+      - name: OpenTofu Validate
+        run: tofu validate
+
+      # DEPLOY STEP 5 - TOFU PLAN 
+      - name: OpenTofu Plan
+        run: tofu plan -no-color
+
+      # DEPLOY STEP 5 - TOFU APPLY 
+      - name: OpenTofu Apply
+        run: tofu apply -auto-approve
