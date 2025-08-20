@@ -1,6 +1,3 @@
-# This block defines the OpenTofu providers we will use.
-# In this case, we only need the AWS provider.
-# The source tells OpenTofu where to find the provider.
 terraform {
   required_providers {
     aws = {
@@ -10,50 +7,116 @@ terraform {
   }
 }
 
-# This configures the AWS provider.
-# It uses the default credentials chain to authenticate.
-# The region can be changed based on your needs.
+# This block configures the AWS provider.
+# It tells OpenTofu which AWS region to deploy the resources to.
+# Note: For CloudFront, the ACM certificate must be in us-east-1, but the
+# distribution itself can be created in any region. The resources in this script
+# are global.
 provider "aws" {
   region = "us-east-1"
 }
 
-# This resource creates a new S3 bucket to host our static website.
-# The bucket name must be globally unique across all of AWS.
-# We'll use "organizethisspace-website" as a simple, clear name.
-# Please change this name if you encounter an error about it not being unique.
-resource "aws_s3_bucket" "ots_website" {
-  bucket = "organizethisspace-website"
-}
+# This code defines a complete and secure configuration for a static website,
+# creating an S3 bucket, a CloudFront distribution, an Origin Access Control (OAC),
+# and the necessary bucket policy. This script is designed to be run from a clean state.
 
-# This resource configures the S3 bucket to serve a static website.
-# It specifies that "index.html" should be the default page.
-resource "aws_s3_bucket_website_configuration" "ots_website_config" {
-  bucket = aws_s3_bucket.ots_website.id
-  index_document {
-    suffix = "index.html"
+# 1. Create the S3 Bucket for the static website
+# This resource creates a private S3 bucket. We block all public access to it.
+resource "aws_s3_bucket" "website_bucket" {
+  bucket = "organizethisspace-website"
+
+  tags = {
+    Name = "organizethisspace-website"
   }
 }
 
-# This resource creates a policy for the S3 bucket, allowing anyone
-# to publicly read the contents of the bucket. This is necessary
-# for the website to be accessible on the internet.
-resource "aws_s3_bucket_policy" "ots_website_policy" {
-  bucket = aws_s3_bucket.ots_website.id
+# 2. Block all public access to the S3 bucket
+# This is a critical security measure to ensure the bucket's content is
+# only accessible via CloudFront.
+resource "aws_s3_bucket_public_access_block" "website_bucket_public_access_block" {
+  bucket = aws_s3_bucket.website_bucket.id
+
+  block_public_acls       = true
+  block_public_policy     = true
+  ignore_public_acls      = true
+  restrict_public_buckets = true
+}
+
+# 3. Create a new Origin Access Control (OAC)
+# This OAC is the secure connection between CloudFront and your S3 bucket.
+# It ensures that only your CloudFront distribution can access the content.
+resource "aws_cloudfront_origin_access_control" "s3_oac" {
+  name                              = "organizethisspace-website-oac"
+  description                       = "OAC for the organizethisspace static website"
+  origin_access_control_origin_type = "s3"
+  signing_behavior                  = "always"
+  signing_protocol                  = "sigv4"
+}
+
+# 4. Create the CloudFront Distribution
+# This resource creates a new distribution that serves content from the S3 bucket
+# and uses the OAC for a secure connection.
+resource "aws_cloudfront_distribution" "s3_distribution" {
+  enabled             = true
+  is_ipv6_enabled     = true
+  comment             = "CloudFront distribution for organizethisspace static website"
+  default_root_object = "index.html"
+
+  origin {
+    domain_name              = aws_s3_bucket.website_bucket.bucket_regional_domain_name
+    origin_id                = "S3-Bucket-Origin"
+    origin_access_control_id = aws_cloudfront_origin_access_control.s3_oac.id
+  }
+
+  default_cache_behavior {
+    target_origin_id       = "S3-Bucket-Origin"
+    viewer_protocol_policy = "redirect-to-https"
+    allowed_methods        = ["GET", "HEAD"]
+    cached_methods         = ["GET", "HEAD"]
+    compress               = true
+  }
+
+  restrictions {
+    geo_restriction {
+      restriction_type = "none"
+    }
+  }
+
+  viewer_certificate {
+    cloudfront_default_certificate = true
+  }
+}
+
+# 5. Create the S3 Bucket Policy
+# This policy grants the CloudFront OAC explicit permission to read objects (s3:GetObject)
+# from your bucket. It uses the ARN of the distribution we just created as the principal.
+resource "aws_s3_bucket_policy" "website_policy" {
+  bucket = aws_s3_bucket.website_bucket.id
 
   policy = jsonencode({
-    Version = "2012-10-17",
+    Version = "2012-10-17"
     Statement = [
       {
-        Sid       = "PublicReadGetObject",
-        Effect    = "Allow",
-        Principal = "*",
-        Action    = [
-          "s3:GetObject"
-        ],
+        Effect    = "Allow"
+        Principal = {
+          Service = "cloudfront.amazonaws.com"
+        }
+        Action = "s3:GetObject"
         Resource = [
-          "${aws_s3_bucket.ots_website.arn}/*"
+          "arn:aws:s3:::${aws_s3_bucket.website_bucket.id}/*",
         ]
-      }
+        Condition = {
+          StringEquals = {
+            "AWS:SourceArn" = aws_cloudfront_distribution.s3_distribution.arn
+          }
+        }
+      },
     ]
   })
+}
+
+# Output the CloudFront distribution domain name so you can access your website.
+output "cloudfront_domain_name" {
+  value       = aws_cloudfront_distribution.s3_distribution.domain_name
+  description = "The domain name of the CloudFront distribution."
 }
