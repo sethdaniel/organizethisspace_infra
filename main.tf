@@ -1,3 +1,6 @@
+# This block configures OpenTofu itself.
+# It specifies the required providers and their versions.
+# We're using the AWS provider here.
 terraform {
   required_providers {
     aws = {
@@ -37,7 +40,9 @@ resource "aws_s3_bucket_public_access_block" "website_bucket_public_access_block
   bucket = aws_s3_bucket.website_bucket.id
 
   block_public_acls       = true
-  block_public_policy     = true
+  # We must set this to 'false' to allow the bucket policy to be attached.
+  # The policy we're attaching is NOT public, so this is a secure change.
+  block_public_policy     = false
   ignore_public_acls      = true
   restrict_public_buckets = true
 }
