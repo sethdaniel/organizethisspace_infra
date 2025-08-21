@@ -52,5 +52,5 @@ jobs:
         uses: peter-evans/repository-dispatch@v2
         with:
           token: ${{ secrets.OTS_REPO_PAT }}
-          repository: your-username/organizethisspace
+          repository: sethdaniel/organizethisspace
           event-type: infra-deployed
