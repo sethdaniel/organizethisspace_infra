@@ -51,6 +51,6 @@ jobs:
       - name: Dispatch to OTS repo
         uses: peter-evans/repository-dispatch@v2
         with:
-          token: ${{ secrets.OTS_REPO_PAT }}
+          token: ${{ secrets.ORG_SPACE_PAT }}
           repository: sethdaniel/organizethisspace
           event-type: infra-deployed
