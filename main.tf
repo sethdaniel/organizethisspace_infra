@@ -1,12 +1,23 @@
 # This block configures OpenTofu itself.
-# It specifies the required providers and their versions.
-# We're using the AWS provider here.
+# It specifies the required providers and their versions, and also
+# the S3 backend for storing the state file remotely.
 terraform {
   required_providers {
     aws = {
       source  = "hashicorp/aws"
       version = "~> 5.0"
     }
+  }
+
+  # This block configures the S3 backend for remote state storage.
+  # This is crucial for collaboration and for maintaining a single
+  # source of truth for your infrastructure's state.
+  backend "s3" {
+    bucket         = "tf-state-bucket-organizethisspace"
+    key            = "website/terraform.tfstate"
+    region         = "us-east-1"
+    encrypt        = true
+    dynamodb_table = "tf-state-lock-table"
   }
 }
 
@@ -79,6 +90,15 @@ resource "aws_cloudfront_distribution" "s3_distribution" {
     allowed_methods        = ["GET", "HEAD"]
     cached_methods         = ["GET", "HEAD"]
     compress               = true
+
+    # This 'forwarded_values' block is required to resolve the InvalidArgument error.
+    # It tells CloudFront not to forward query strings or cookies to the S3 origin.
+    forwarded_values {
+      query_string = false
+      cookies {
+        forward = "none"
+      }
+    }
   }
 
   restrictions {
