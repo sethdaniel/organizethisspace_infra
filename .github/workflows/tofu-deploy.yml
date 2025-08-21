@@ -43,3 +43,14 @@ jobs:
       # DEPLOY STEP 5 - TOFU APPLY 
       - name: OpenTofu Apply
         run: tofu apply -auto-approve
+
+  notify-ots:
+    needs: deploy
+    runs-on: ubuntu-latest
+    steps:
+      - name: Dispatch to OTS repo
+        uses: peter-evans/repository-dispatch@v2
+        with:
+          token: ${{ secrets.OTS_REPO_PAT }}
+          repository: your-username/organizethisspace
+          event-type: infra-deployed
